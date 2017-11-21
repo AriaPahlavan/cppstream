@@ -2,30 +2,37 @@
 // Created by Aria Pahlavan on 10/20/17.
 //
 #include <iostream>
-#include "VectorStream.h"
 #include "Stream.h"
+#include <stdio.h>      /* printf, scanf, puts, NULL */
+#include <stdlib.h>     /* srand, rand */
+#include <time.h>       /* time */
 
 using namespace std;
 
 int main() {
 
-    vector<string> ints = {"", "one ", "two ", "three ", "four ", "five "};
-    auto val = {1, 2, 3, 4, 5};
+    vector<int> val;
+    srand (time(NULL));
 
-    auto func = [](int x) -> int { return 2 * x; };
+    for (int i = 0; i < 100000; ++i) {
+        i = rand() % 500 + 1;
+        val.emplace_back(i);
+    }
+
 
     cout <<
-    Stream::make<int>(val)
-            .remove([](int x){ return x == 2; })
-            .filter([](int x){ return x < 5; })
-            .flatmap<string>([&ints](int x) { return ints[x]; })
-            .reduce([](string a, string b){ return a + " " + b; }, "")
+         Stream::make<int>(val)
+                 .remove([](int x) { return x == 2; })
+                 .filter([](int x){ return x<5; })
+                 .flatmap<string>([](int x) { return std::to_string(x); })
+                 .reduce([](string a, string b) { return a + " " + b; }, "{")
+                 .get()
+         <<
+            " }"
          << endl;
 
+    cout << "------------" << endl;
 
-
-
-//            .reduce([](int a, int b) { return a + b; }, 0)
 
     return 0;
 }
