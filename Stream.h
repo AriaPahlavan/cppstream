@@ -10,9 +10,14 @@
 #include <map>
 #include <future>
 #include "Stream.h"
+#include <numeric>
 
 template<typename T>
 class VectorStream;
+
+
+template<typename T>
+class VectorStream2;
 
 template<typename M, typename N>
 class MapStream;
@@ -24,6 +29,11 @@ public:
         std::promise<std::vector<T>> vec;
         vec.set_value(v);
         return VectorStream<T>(move(vec));
+    }
+
+    template <typename T>
+    static auto make2(std::vector<T> v) {
+        return VectorStream2<T>(v);
     }
 
     template <typename T, typename U>
@@ -40,13 +50,11 @@ private:
 
     futureVector fv;
 
-public:
-    explicit VectorStream(promiseVector v) : fv(v.get_future()) {
-    }
-    explicit VectorStream(futureVector v) : fv(std::move(v)) {}
+    template <typename fun>
+    auto launch(fun functor){ return std::async(std::launch::async, functor);}
 
     template<typename U, typename fun>
-    auto _flatmap(fun mapper) {
+    auto _map(fun mapper) {
         std::vector <U> newV;
         auto v = fv.get();
         newV.resize(v.size());
@@ -55,27 +63,24 @@ public:
         return newV;
     }
 
-    template<typename U, typename fun>
-    auto flatmap(fun mapper) {
-        auto fu = std::async(std::launch::async, [=](){ return _flatmap<U>(mapper); });
-        return VectorStream<U>(std::move(fu));
-    }
-
     template <typename fun>
     auto _remove(fun predicate){
-        std::vector <T> newV;
         auto v = fv.get();
-        newV.resize(v.size());
+        std::vector <T> newV(v);
 
         auto garbage = std::remove_copy_if(v.begin(), v.end(), newV.begin(), predicate);
-        newV.erase(garbage);
+        newV.erase(garbage, newV.end());
         return newV;
     }
 
     template <typename fun>
-    auto remove(fun predicate){
-        auto fu = std::async(std::launch::async, [=](){ return _remove(predicate); });
-        return VectorStream<T>(std::move(fu));
+    auto _filter(fun predicate){
+        auto v = fv.get();
+        std::vector <T> newV(v);
+
+        auto garbage = std::copy_if(v.begin(), v.end(), newV.begin(), predicate);
+        newV.erase(garbage, newV.end());
+        return newV;
     }
 
     template <typename fun>
@@ -85,37 +90,55 @@ public:
     }
 
     template <typename fun>
-    auto reduce(fun reducer, T init){
-        auto fu = std::async(std::launch::async, [=](){ return _reduce(reducer, init); });
-        return fu;
-    }
-
-    template <typename fun>
-    auto _filter(fun predicate){
-        std::vector <T> newV;
+    auto _forEach(fun action){
         auto v = fv.get();
-        newV.resize(v.size());
+        std::for_each(v.begin(), v.end(), action);
 
-        auto garbage = std::copy_if(v.begin(), v.end(), newV.begin(), predicate);
-        newV.erase(garbage);
-        return newV;
+        return v;
     }
 
-    template <typename fun>
-    auto filter(fun predicate){
-        auto fu = std::async(std::launch::async, [=](){ return _filter(predicate); });
+public:
+    explicit VectorStream(promiseVector v) : fv(v.get_future()) {
+    }
+    explicit VectorStream(futureVector v) : fv(std::move(v)) {}
+
+    template<typename U, typename fun>
+    auto map(fun mapper) {
+        auto fu = launch([=](){ return _map<U>(mapper); });
+        return VectorStream<U>(std::move(fu));
+    }
+
+    template<typename fun>
+    auto map(fun mapper) {
+        auto fu = launch([=](){ return _map<T>(mapper); });
         return VectorStream<T>(std::move(fu));
     }
 
     template <typename fun>
-    auto forEach(fun action){
-        auto v = fv.get();
-        std::for_each(v.begin(), v.end(), action);
-
-        promiseVector pv;
-        pv.set_value(v);
-        return VectorStream<T>(std::move(pv));
+    auto remove(fun predicate){
+        auto fu = launch([&](){ return this->_remove(predicate); });
+        return VectorStream<T>(std::move(fu));
     }
+
+    template <typename fun>
+    auto filter(fun predicate){
+        auto fu = launch([=](){ return _filter(predicate); });
+        return VectorStream<T>(std::move(fu));
+    }
+
+    template <typename fun>
+    auto reduce(fun reducer, T init){
+        auto fu = launch([=](){ return _reduce(reducer, init); });
+        return fu;
+    }
+
+    template <typename fun>
+    auto forEach(fun action){
+        auto fu = launch([=](){ return _forEach(action); });
+        return VectorStream<T>(std::move(fu));
+    }
+
+    auto get() { return fv.get(); }
 
     template <typename fun>
     auto collect(fun collector){
@@ -124,6 +147,60 @@ public:
 
     auto operator|(const VectorStream &rhs) const {
         return true;
+    }
+};
+
+///@deprecated: for performance testing purposes only.
+template<typename T>
+class [[deprecated("use \'VectorStream\' instead.")]] VectorStream2 : public Stream {
+private:
+    std::vector<T> v;
+
+public:
+    explicit VectorStream2(const std::vector<T> &v) : v(v) {}
+
+    template<typename U, typename fun>
+    auto flatmap(fun mapper) {
+        std::vector <U> newV;
+        newV.resize(v.size());
+
+        std::transform(v.begin(), v.end(), newV.begin(), mapper);
+        return VectorStream2<U>(newV);
+    }
+
+    template <typename fun>
+    auto remove(fun predicate){
+        std::vector <T> newV;
+        newV.resize(v.size());
+
+        auto garbage = std::remove_copy_if(v.begin(), v.end(), newV.begin(), predicate);
+        newV.erase(garbage, newV.end());
+
+        return VectorStream2<T>(newV);
+    }
+
+    template <typename fun>
+    auto filter(fun predicate){
+        std::vector <T> newV;
+        newV.resize(v.size());
+
+        auto garbage = std::copy_if(v.begin(), v.end(), newV.begin(), predicate);
+        newV.erase(garbage, newV.end());
+
+        return VectorStream2<T>(newV);
+    }
+
+
+    template <typename fun>
+    auto reduce(fun reducer, T init){
+        return std::accumulate(v.begin(), v.end(), init);
+    }
+
+    template <typename fun>
+    auto &forEach(fun action){
+        std::for_each(v.begin(), v.end(), action);
+
+        return *this;
     }
 };
 
